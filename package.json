@@ -1,0 +1,27 @@
+{
+  "main": "build/dist/cartogramchart.js",
+  "scripts": {
+    "link": "npm link ../vizabi",
+    "build": "webpack --progress"
+  },
+  "devDependencies": {
+    "vizabi-tool-bundler": "github:vizabi/vizabi-tool-bundler"
+  },
+  "name": "vizabi-cartogramchart",
+  "version": "1.0.0",
+  "dependencies": {
+    "vizabi": "^0.20.2-8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vizabi/vizabi-cartogramchart.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vizabi/vizabi-cartogramchart/issues"
+  },
+  "homepage": "https://github.com/vizabi/vizabi-cartogramchart#readme",
+  "description": ""
+}
