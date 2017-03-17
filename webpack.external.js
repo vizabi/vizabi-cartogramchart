@@ -1,1 +1,1 @@
-module.exports = require("vizabi-tool-bundler").bind(null, "CartogramChart", "cartogramchart", __dirname);
+module.exports = require("vizabi-tool-bundler").bind(null, "", "cartogram", __dirname);
