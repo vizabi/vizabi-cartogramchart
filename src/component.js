@@ -1,3 +1,5 @@
+import "./helpers/cartogram";
+
 const {
   _globals: globals,
   utils,
