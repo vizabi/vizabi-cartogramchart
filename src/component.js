@@ -16,7 +16,7 @@ const {
 
 
 // BUBBLE MAP CHART COMPONENT
-const CartogramComponent = Vizabi.Component.extend({
+const CartogramComponent = Vizabi.Component.extend("cartogram", {
   /**
    * Initializes the component (Bubble Map Chart).
    * Executed once before any template is rendered.
