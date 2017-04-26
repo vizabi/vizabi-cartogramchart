@@ -1,6 +1,7 @@
 import "./styles.scss";
 import component from "./component";
 
+const VERSION_INFO = { version: __VERSION, build: __BUILD };
 
 //CARTOGRAM TOOL
 const Cartogram = Vizabi.Tool.extend("Cartogram", {
@@ -67,7 +68,9 @@ const Cartogram = Vizabi.Tool.extend("Cartogram", {
       },
       presentation: false
     }
-  }
+  },
+
+  versionInfo: VERSION_INFO
 });
 
 export default Cartogram;
