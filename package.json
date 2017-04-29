@@ -10,7 +10,7 @@
     "vizabi-tool-bundler": "github:vizabi/vizabi-tool-bundler"
   },
   "name": "vizabi-cartogram",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "dependencies": {
     "vizabi": "^0.21.0-20"
   },
