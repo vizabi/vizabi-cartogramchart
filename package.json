@@ -1,5 +1,5 @@
 {
-  "main": "build/dist/cartogram.js",
+  "main": "build/cartogram.js",
   "scripts": {
     "link": "npm link ../vizabi",
     "build": "cross-env NODE_ENV=production webpack --progress",
@@ -10,7 +10,7 @@
     "vizabi-tool-bundler": "github:vizabi/vizabi-tool-bundler"
   },
   "name": "vizabi-cartogram",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "dependencies": {
     "vizabi": "^0.21.0-20"
   },
