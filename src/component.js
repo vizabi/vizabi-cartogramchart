@@ -6,6 +6,7 @@ const {
   helpers: {
     labels: Labels,
     "d3.geoProjection": d3GeoProjection,
+    topojson,
     "d3.dynamicBackground": DynamicBackground, 
   },
   iconset: {
@@ -89,19 +90,19 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
       "change:ui.chart.lockNonSelected": function(evt) {
         _this.updateEntities(900);
       },
-      "change:entities.select": function() {
+      "change:marker.select": function() {
         if (!_this._readyOnce) return;
         _this.updateLandOpacity();
       },
-      "change:entities.highlight": function() {
+      "change:marker.highlight": function() {
         if (!_this._readyOnce) return;
         //console.log("EVENT change:entities:highlight");
         _this.updateLandOpacity();
       },
-      "change:entities.opacitySelectDim": function() {
+      "change:marker.opacitySelectDim": function() {
         _this.updateLandOpacity();
       },
-      "change:entities.opacityRegular": function() {
+      "change:marker.opacityRegular": function() {
         _this.updateLandOpacity();
       },
     };
@@ -113,21 +114,28 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
 
     _this.COLOR_LAND_DEFAULT = "#fdfdfd";
 
-    this.lands = null;
+    this.mapLands = null;
     this.features = null;
     this.topo_features = null;
     this.borderArcs = null;
     this.defaultWidth = 700;
     this.defaultHeight = 550;
     this.updateEntitiesQueue = [];
-    this.boundBox = [[0.05, 0.0], [0.95, 1.0]]; // two points to set box bound on 960 * 500 image;
     d3GeoProjection();
     this.cached = [];
-    this.projection = d3.geo.mercator()
-      .center([25, -29])
-      .scale(1900)
-      .translate([this.defaultWidth / 2, this.defaultHeight / 2])
-      .precision(0.1);
+
+    const projection = "geo" + utils.capitalize(this.model.ui.map.projection);
+
+    this.zeroProjection = d3[projection]()
+      .scale(1)
+      .translate([0, 0]);
+
+    this.projection = d3[projection]()
+      .scale(1)
+      .translate([0, 0]);
+
+    this.mapPath = d3.geoPath()
+      .projection(this.projection);
 
     this.cartogram = d3.cartogram()
         .projection(this.projection)
@@ -146,22 +154,18 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     const _this = this;
     if (!this.world) utils.warn("cartogram afterPreload: missing country shapes " + this.world);
     if (!this.geometries) utils.warn("cartogram afterPreload: missing country shapes " + this.geometries);
-
-    // http://bl.ocks.org/mbostock/d4021aa4dccfd65edffd patterson
-    // http://bl.ocks.org/mbostock/3710566 robinson
-    // map background
-
-    this.borderArcs = _this.cartogram.meshArcs(this.world, this.world.objects.topo, (a, b) => a.properties.MN_NAME && a.properties.PR_NAME !== b.properties.PR_NAME);
-
   },
   _getKey(d) {
-    return d.properties[this.id_lookup] ? d.properties[this.id_lookup].toString() : d.id.toString();
+    return d.properties[this.model.ui.map.topology.geoIdProperty] &&
+      this.mapKeys[d.properties[this.model.ui.map.topology.geoIdProperty]] ?
+        this.mapKeys[d.properties[this.model.ui.map.topology.geoIdProperty]].toString() : 
+        d.id.toString();
   },
   /**
    * DOM is ready
    */
   readyOnce() {
-
+    const _this = this;
     this.element = d3.select(this.element);
 
     this.graph = this.element.select(".vzb-ct-graph");
@@ -170,10 +174,12 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     this.labelsContainerCrop = this.graph.select(".vzb-ct-labels-crop");
     this.labelsContainer = this.graph.select(".vzb-ct-labels");
 
-    this.yTitleEl = this.graph.select(".vzb-ct-axis-y-title");
-    this.sTitleEl = this.graph.select(".vzb-ct-axis-c-title");
-    this.yInfoEl = this.graph.select(".vzb-ct-axis-y-info");
-    this.sInfoEl = this.graph.select(".vzb-ct-axis-c-info");
+    this.sTitleEl = this.graph.select(".vzb-ct-axis-s-title");
+    this.cTitleEl = this.graph.select(".vzb-ct-axis-c-title");
+
+    this.sInfoEl = this.graph.select(".vzb-ct-axis-s-info");
+    this.cInfoEl = this.graph.select(".vzb-ct-axis-c-info");
+
     this.dataWarningEl = this.graph.select(".vzb-data-warning");
     this.entityBubbles = null;
     this.tooltip = this.element.select(".vzb-ct-tooltip");
@@ -182,60 +188,27 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     this.yearEl = this.graph.select(".vzb-ct-year");
     this.year = new DynamicBackground(this.yearEl);
     this.year.setConditions({ xAlign: "left", yAlign: "bottom", bottomOffset: 5 });
+
     this.mapGraph = this.element.select(".vzb-ct-map-graph")
       .attr("width", this.defaultWidth)
       .attr("height", this.defaultHeight);
     this.mapGraph.html("");
 
-
+    this.showAreas();
     this.KEY = this.model.entities.getDimension();
     this.TIMEDIM = this.model.time.getDimension();
 
-    const _this = this;
     this.updateUIStrings();
     this.on("resize", () => this.updateSize());
     this.wScale = d3.scale.linear()
       .domain(this.model.ui.datawarning.doubtDomain)
       .range(this.model.ui.datawarning.doubtRange);
 
-    this.cartogram.iterations(0);
-    this.redrawInProgress = true;
-
-    this.cartogram(this.world, this.geometries).then(response => {
-      _this.redrawInProgress = false;
-
-    _this.features = _this.topo_features = response.features;
-    _this.lands = _this.mapGraph.selectAll(".land")
-        .data(_this.topo_features)
-        .enter().append("path")
-        .attr("class", d => "land " + (d.properties[_this.id_lookup] ? d.properties[_this.id_lookup] : d.id))
-  .attr("d", _this.cartogram.path)
-      .on("mouseover", (d, i) => {
-      if (utils.isTouchDevice()) return;
-    _this._interact()._mouseover(d, i);
-  })
-  .on("mouseout", (d, i) => {
-      if (utils.isTouchDevice()) return;
-    _this._interact()._mouseout(d, i);
-  })
-  .on("click", (d, i) => {
-      if (utils.isTouchDevice()) return;
-    _this._interact()._click(d, i);
-  })
-  .each(d => {
-      d[_this.KEY] = _this._getKey(d);
-  });
-
-    if (_this.borderArcs) {
-      const data = _this.cartogram.stitchArcs(response, _this.borderArcs);
-      _this.borders = _this.mapGraph.append("path")
-        .datum(data)
-        .attr("class", "boundary")
-        .attr("d", _this.cartogram.path);
-    }
-  });
+/*
+*/
   },
-
+  
+  
   frameChanged(frame, time) {
     if (time.toString() != this.model.time.value.toString()) return; // frame is outdated
     if (!frame) return;
@@ -255,7 +228,55 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     this.updateUIStrings();
     this.updateMarkerSizeLimits();
     this.updateSize();
-    this.model.marker.getFrame(_this.model.time.value, _this.frameChanged.bind(_this));
+    this.model.marker.getFrame(_this.model.time.value, (frame, time) => {
+      _this.mapKeys = Object.keys(frame.hook_map)
+        .reduce((obj, key) => {
+          obj[frame.hook_map[key]] = key;
+          return obj;
+        }, {});
+      _this.frameChanged(frame, time)
+    });
+  },
+
+  showAreas() {
+    const _this = this;
+    this.cartogram.iterations(0);
+    this.redrawInProgress = true;
+
+    this.cartogram(this.shapes, this.geometries).then(response => {
+      _this.redrawInProgress = false;
+
+      _this.features = _this.topo_features = response.features;
+      _this.mapLands = _this.mapGraph.selectAll(".land")
+        .data(_this.topo_features)
+        .enter().append("path")
+        .attr("class", d => "land " + (d.properties[_this.model.ui.map.topology.geoIdProperty] ?
+          d.properties[_this.model.ui.map.topology.geoIdProperty] :
+          d.id))
+        .attr("d", _this.cartogram.path)
+        .on("mouseover", (d, i) => {
+          if (utils.isTouchDevice()) return;
+          _this._interact()._mouseover(d, i);
+        })
+        .on("mouseout", (d, i) => {
+          if (utils.isTouchDevice()) return;
+          _this._interact()._mouseout(d, i);
+        })
+        .on("click", (d, i) => {
+          if (utils.isTouchDevice()) return;
+          _this._interact()._click(d, i);
+        })
+        .each(d => {
+          d[_this.KEY] = _this._getKey(d);
+        });
+      if (_this.borderArcs) {
+        const data = _this.cartogram.stitchArcs(response, _this.borderArcs);
+        _this.borders = _this.mapGraph.append("path")
+          .datum(data)
+          .attr("class", "boundary")
+          .attr("d", _this.cartogram.path);
+      }
+    });
   },
 
   /**
@@ -278,18 +299,6 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     } else {
       this.sScale.rangePoints([this.minRadius, this.maxRadius], 0).range();
     }
-  },
-
-  _calculateTotalSize(year, frame) {
-    if (this.cached[year]) {
-      return this.cached[year];
-    }
-    const _this = this;
-    this.cached[year] = 0;
-    utils.forEach(frame, val => {
-      _this.cached[year] += _this.sScale(val);
-  });
-    return this.cached[year];
   },
 
   _redrawEntities() {
@@ -317,66 +326,58 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
       //var areas = _this.topo_features.map(d3.geo.path().projection(null).area);
       _this.cartogram.value(d => {
         if (_this.model.ui.chart.lockNonSelected) {
-        const size1 = _this.sScale(lockedFrame.size[_this._getKey(d)]);/* * _this._calculateTotalSize(_this.model.time.value, _this.values.size)*/
-        const size2 = _this.sScale(_this.values.size[_this._getKey(d)]);/* * _this._calculateTotalSize(time, lockedFrame.size)*/
-        return d3.geo.path().projection(null).area(d) * Math.pow((size2 / size1), 2);
-      }
-      return _this.sScale(_this.values.size[_this._getKey(d)]);
-    });
-      /*
-       if (_this.model.ui.chart.lockNonSelected) {
-       totValue = d3.sum(areas);
-       }
-       */
+          const size1 = _this.sScale(lockedFrame.size[_this._getKey(d)]);
+          const size2 = _this.sScale(_this.values.size[_this._getKey(d)]);
+          return d3.geo.path().projection(null).area(d) * Math.pow((size2 / size1), 2);
+        }
+        return _this.sScale(_this.values.size[_this._getKey(d)]);
+      });
     }
-    const calcDuration = 0;
     const start = new Date().getTime();
-    _this.cartogram(_this.world, _this.geometries, totValue).then(response => {
+    _this.cartogram(_this.shapes, _this.geometries, totValue).then(response => {
       const end = new Date().getTime();
-    if (duration) { // increale duration for prevent gaps between frames
-      duration = Math.max(duration, end - start);
-    }
-    _this.features = response.features;
-    if (_this.borderArcs) {
-      const data = _this.cartogram.stitchArcs(response, _this.borderArcs);
-      _this.borders.datum(data)
-        .transition()
-        .duration(duration)
-        .ease(d3.easeLinear)
-        .attr("d", _this.cartogram.path);
-    }
-    _this.lands.data(_this.features)
-      .each(d => {
-      d[_this.KEY] = _this._getKey(d);
-  });
-    if (duration) {
-      _this.lands.interrupt()
-        .transition()
-        .duration(duration)
-        .ease(d3.easeLinear)
-        .style("fill", d => _this.values.color[_this._getKey(d)] != null ? _this.cScale(_this.values.color[_this._getKey(d)]) : _this.COLOR_LAND_DEFAULT)
-    .attr("d", _this.cartogram.path);
+      if (duration) { // increale duration for prevent gaps between frames
+        duration = Math.max(duration, end - start);
+      }
+      _this.features = response.features;
       if (_this.borderArcs) {
-        _this.borders.interrupt()
+        const data = _this.cartogram.stitchArcs(response, _this.borderArcs);
+        _this.borders.datum(data)
           .transition()
           .duration(duration)
           .ease(d3.easeLinear)
           .attr("d", _this.cartogram.path);
       }
-
-    } else {
-      _this.borders
-        .attr("d", _this.cartogram.path);
-
-      _this.lands
-        .style("fill", d => _this.values.color[_this._getKey(d)] != null ? _this.cScale(_this.values.color[_this._getKey(d)]) : _this.COLOR_LAND_DEFAULT)
-    .attr("d", _this.cartogram.path);
-
-    }
-    _this.updateLandOpacity();
-    _this.redrawInProgress = false;
-    _this._redrawEntities();
+    _this.mapLands.data(_this.features)
+      .each(d => {
+      d[_this.KEY] = _this._getKey(d);
   });
+      if (duration) {
+        _this.mapLands.interrupt()
+          .transition()
+          .duration(duration)
+          .ease(d3.easeLinear)
+          .style("fill", d => _this.values.color[_this._getKey(d)] != null ? _this.cScale(_this.values.color[_this._getKey(d)]) : _this.COLOR_LAND_DEFAULT)
+          .attr("d", _this.cartogram.path);
+        if (_this.borderArcs) {
+          _this.borders.interrupt()
+            .transition()
+            .duration(duration)
+            .ease(d3.easeLinear)
+            .attr("d", _this.cartogram.path);
+        }
+      } else {
+        _this.borders
+          .attr("d", _this.cartogram.path);
+  
+        _this.mapLands
+          .style("fill", d => _this.values.color[_this._getKey(d)] != null ? _this.cScale(_this.values.color[_this._getKey(d)]) : _this.COLOR_LAND_DEFAULT)
+          .attr("d", _this.cartogram.path);
+      }
+      _this.updateLandOpacity();
+      _this.redrawInProgress = false;
+      _this._redrawEntities();
+    });
   });
   },
 
@@ -389,7 +390,7 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
 
   updateEntitityColor() {
     const _this = this;
-    this.lands.transition()
+    this.mapLands.transition()
       .duration(_this.duration)
       .ease(d3.easeLinear)
       .style("fill", d => _this.values.color[_this._getKey(d)] != null ? _this.cScale(_this.values.color[_this._getKey(d)]) : _this.COLOR_LAND_DEFAULT);
@@ -399,38 +400,40 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     const _this = this;
 
     this.translator = this.model.locale.getTFunction();
-    const sizeConceptprops = this.model.marker.size.getConceptprops();
+
+    const conceptPropsS = _this.model.marker.size.getConceptprops();
+    const conceptPropsC = _this.model.marker.color.getConceptprops();
+
     this.strings = {
       title: {
-        C: (_this.model.marker.size.use !== "constant" ? this.translator("buttons/color") + ": " : "") + this.translator("indicator/" + _this.model.marker.color.which),
-        S: this.translator("buttons/size") + ": " + this.translator("indicator/" + _this.model.marker.size.which)
+        S: conceptPropsS.name,
+        C: conceptPropsC.name
       }
     };
 
-    this.yTitleEl.select("text")
-    //don't show "Color:" when the size is constant and we are only showing color
-      .text(this.strings.title.C)
-      .on("click", () => {
-      _this.parent
-      .findChildByName("gapminder-treemenu")
-      .markerID("color")
-      .alignX("left")
-      .alignY("top")
-      .updateView()
-      .toggle();
-  });
-
     this.sTitleEl.select("text")
-      .text(this.strings.title.S)
+      .text(this.translator("buttons/size") + ": " + this.strings.title.S)
       .on("click", () => {
-      _this.parent
-      .findChildByName("gapminder-treemenu")
-      .markerID("size")
-      .alignX("left")
-      .alignY("top")
-      .updateView()
-      .toggle();
-  });
+        _this.parent
+          .findChildByName("gapminder-treemenu")
+          .markerID("size")
+          .alignX(_this.model.locale.isRTL() ? "right" : "left")
+          .alignY("top")
+          .updateView()
+          .toggle();
+      });
+
+    this.cTitleEl.select("text")
+      .text(this.translator("buttons/color") + ": " + this.strings.title.C)
+      .on("click", () => {
+        _this.parent
+          .findChildByName("gapminder-treemenu")
+          .markerID("color")
+          .alignX(_this.model.locale.isRTL() ? "right" : "left")
+          .alignY("top")
+          .updateView()
+          .toggle();
+      });
 
     utils.setIcon(this.dataWarningEl, iconWarn).select("svg").attr("width", "0px").attr("height", "0px");
     this.dataWarningEl.append("text")
@@ -439,31 +442,14 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
 
     this.dataWarningEl
       .on("click", () => {
-      _this.parent.findChildByName("gapminder-datawarning").toggle();
-  })
-  .on("mouseover", () => {
-      _this.updateDoubtOpacity(1);
-  })
-  .on("mouseout", () => {
-      _this.updateDoubtOpacity();
-  });
-
-    this.yInfoEl
-      .html(iconQuestion)
-      .select("svg").attr("width", "0px").attr("height", "0px");
-
-    //TODO: move away from UI strings, maybe to ready or ready once
-    this.yInfoEl.on("click", () => {
-      _this.parent.findChildByName("gapminder-datanotes").pin();
-  });
-    this.yInfoEl.on("mouseover", function() {
-      const rect = this.getBBox();
-      const coord = utils.makeAbsoluteContext(this, this.farthestViewportElement)(rect.x - 10, rect.y + rect.height + 10);
-      _this.parent.findChildByName("gapminder-datanotes").setHook("size").show().setPos(coord.x, coord.y);
-    });
-    this.yInfoEl.on("mouseout", () => {
-      _this.parent.findChildByName("gapminder-datanotes").hide();
-  });
+        _this.parent.findChildByName("gapminder-datawarning").toggle();
+      })
+      .on("mouseover", () => {
+        _this.updateDoubtOpacity(1);
+      })
+      .on("mouseout", () => {
+        _this.updateDoubtOpacity();
+      });
 
     this.sInfoEl
       .html(iconQuestion)
@@ -472,15 +458,36 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     //TODO: move away from UI strings, maybe to ready or ready once
     this.sInfoEl.on("click", () => {
       _this.parent.findChildByName("gapminder-datanotes").pin();
-  });
+    });
     this.sInfoEl.on("mouseover", function() {
       const rect = this.getBBox();
       const coord = utils.makeAbsoluteContext(this, this.farthestViewportElement)(rect.x - 10, rect.y + rect.height + 10);
-      _this.parent.findChildByName("gapminder-datanotes").setHook("color").show().setPos(coord.x, coord.y);
+      const toolRect = _this.root.element.getBoundingClientRect();
+      const chartRect = _this.element.node().getBoundingClientRect();
+      _this.parent.findChildByName("gapminder-datanotes").setHook("size").show().setPos(coord.x + chartRect.left - toolRect.left, coord.y);
     });
     this.sInfoEl.on("mouseout", () => {
       _this.parent.findChildByName("gapminder-datanotes").hide();
-  });
+    });
+
+    this.cInfoEl
+      .html(iconQuestion)
+      .select("svg").attr("width", "0px").attr("height", "0px");
+
+    //TODO: move away from UI strings, maybe to ready or ready once
+    this.cInfoEl.on("click", () => {
+      _this.parent.findChildByName("gapminder-datanotes").pin();
+    });
+    this.cInfoEl.on("mouseover", function() {
+      const rect = this.getBBox();
+      const coord = utils.makeAbsoluteContext(this, this.farthestViewportElement)(rect.x - 10, rect.y + rect.height + 10);
+      const toolRect = _this.root.element.getBoundingClientRect();
+      const chartRect = _this.element.node().getBoundingClientRect();
+      _this.parent.findChildByName("gapminder-datanotes").setHook("color").show().setPos(coord.x + chartRect.left - toolRect.left, coord.y);
+    });
+    this.cInfoEl.on("mouseout", () => {
+      _this.parent.findChildByName("gapminder-datanotes").hide();
+    });
   },
 
   updateDoubtOpacity(opacity) {
@@ -541,11 +548,37 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
 
     if (this.height <= 0 || this.width <= 0) return utils.warn("Bubble map updateSize() abort: vizabi container is too little or has display:none");
 
-    const boundBox = this.boundBox;
-    const viewBox = [boundBox[0][0] * this.defaultWidth,
-      boundBox[0][1] * this.defaultHeight,
-      Math.abs(boundBox[1][0] - boundBox[0][0]) * this.defaultWidth,
-      Math.abs(boundBox[1][1] - boundBox[0][1]) * this.defaultHeight];
+
+    let scaleDelta = 1, mapTopOffset = 0, mapLeftOffset = 0;
+    const currentNW = this.zeroProjection([
+      this.model.ui.map.bounds.west,
+      this.model.ui.map.bounds.north
+    ]);
+    const currentSE = this.zeroProjection([
+      this.model.ui.map.bounds.east,
+      this.model.ui.map.bounds.south
+    ]);
+    const canvas = [
+      [0, 0],
+      [width, height]
+    ];
+    if (this.model.ui.map.preserveAspectRatio) {
+      mapTopOffset =  margin.top;
+      mapLeftOffset =  margin.left;
+      const scaleX = Math.abs((canvas[1][0] - canvas[0][0]) / (currentSE[0] - currentNW[0]));
+      const scaleY = Math.abs((canvas[1][1] - canvas[0][1]) / (currentSE[1] - currentNW[1]));
+      if (scaleX != scaleY) {
+        if (scaleX > scaleY) {
+          scaleDelta = scaleY;
+          mapLeftOffset += (Math.abs(canvas[1][0] - canvas[0][0]) - Math.abs(scaleDelta * (currentNW[1] - currentSE[1]))) / 2;
+        } else {
+          scaleDelta = scaleX;
+          mapTopOffset += (Math.abs(canvas[1][1] - canvas[0][1]) - Math.abs(scaleDelta * (currentNW[0] - currentSE[0]))) / 2;
+        }
+      }
+    } else {
+      scaleDelta = Math.abs((canvas[1][0] - canvas[0][0]) / (currentSE[0] - currentNW[0]));
+    }
 
     this.graph
       .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
@@ -555,19 +588,30 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     this.mapSvg
       .attr("width", width)
       .attr("height", height)
-      .attr("viewBox", viewBox.join(" "))
       .attr("preserveAspectRatio", "xMidYMid")
       .attr("x", margin.left)
       .attr("y", margin.top)
       .style("transform", "translate3d(" + margin.left + "px," + margin.top + "px,0)");
 
-    this.yTitleEl
+    this.projection
+      .translate([canvas[0][0] - (currentNW[0] * scaleDelta) + mapLeftOffset - margin.left, canvas[0][1] - (currentNW[1] * scaleDelta) + mapTopOffset - margin.top])
+      .scale(scaleDelta)
+      .precision(0.1);
+    this.cartogram.projection(this.projection);
+    this.updateEntities();
+
+    this.year.setConditions({
+      widthRatio: 2 / 10
+    });
+    this.year.resize(this.width, this.height);
+    
+    this.cTitleEl
       .style("font-size", infoElHeight)
       .attr("transform", "translate(0," + margin.top + ")");
 
-    const yTitleBB = this.yTitleEl.select("text").node().getBBox();
+    const cTitleBB = this.cTitleEl.select("text").node().getBBox();
 
-    this.sTitleEl.attr("transform", "translate(" + 0 + "," + (margin.top + yTitleBB.height) + ")")
+    this.sTitleEl.attr("transform", "translate(" + 0 + "," + (margin.top + cTitleBB.height) + ")")
       .classed("vzb-hidden", this.model.marker.size.use == "constant");
 
     const warnBB = this.dataWarningEl.select("text").node().getBBox();
@@ -581,23 +625,9 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
       .attr("transform", "translate(" + (this.width) + "," + (this.height - warnBB.height * 0.5) + ")")
       .select("text");
 
-    if (this.yInfoEl.select("svg").node()) {
-      const titleBBox = this.yTitleEl.node().getBBox();
-      const translate = d3.transform(this.yTitleEl.attr("transform")).translate;
-
-      this.yInfoEl.select("svg")
-        .attr("width", infoElHeight)
-        .attr("height", infoElHeight);
-      this.yInfoEl.attr("transform", "translate("
-        + (titleBBox.x + translate[0] + titleBBox.width + infoElHeight * 0.4) + ","
-        + (translate[1] - infoElHeight * 0.8) + ")");
-    }
-
-    this.sInfoEl.classed("vzb-hidden", this.sTitleEl.classed("vzb-hidden"));
-
-    if (!this.sInfoEl.classed("vzb-hidden") && this.sInfoEl.select("svg").node()) {
+    if (this.sInfoEl.select("svg").node()) {
       const titleBBox = this.sTitleEl.node().getBBox();
-      const translate = d3.transform(this.sTitleEl.attr("transform")).translate;
+      const translate = [0, 0];//d3.transform(this.yTitleEl.attr("transform")).translate;
 
       this.sInfoEl.select("svg")
         .attr("width", infoElHeight)
@@ -606,30 +636,44 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
         + (titleBBox.x + translate[0] + titleBBox.width + infoElHeight * 0.4) + ","
         + (translate[1] - infoElHeight * 0.8) + ")");
     }
+
+    this.cInfoEl.classed("vzb-hidden", this.cTitleEl.classed("vzb-hidden"));
+
+    if (!this.cInfoEl.classed("vzb-hidden") && this.cInfoEl.select("svg").node()) {
+      const titleBBox = this.cTitleEl.node().getBBox();
+      const translate = [0, 0];//d3.transform(this.sTitleEl.attr("transform")).translate;
+
+      this.cInfoEl.select("svg")
+        .attr("width", infoElHeight)
+        .attr("height", infoElHeight);
+      this.cInfoEl.attr("transform", "translate("
+        + (titleBBox.x + translate[0] + titleBBox.width + infoElHeight * 0.4) + ","
+        + (translate[1] - infoElHeight * 0.8) + ")");
+    }
   },
 
   fitSizeOfTitles() {
 
     //reset font sizes first to make the measurement consistent
-    const yTitleText = this.yTitleEl.select("text")
+    const cTitleText = this.cTitleEl.select("text")
       .style("font-size", null);
     const sTitleText = this.sTitleEl.select("text")
       .style("font-size", null);
 
 
-    const yTitleBB = yTitleText.node().getBBox();
-    const sTitleBB = this.sTitleEl.classed("vzb-hidden") ? yTitleBB : sTitleText.node().getBBox();
+    const cTitleBB = cTitleText.node().getBBox();
+    const sTitleBB = this.sTitleEl.classed("vzb-hidden") ? cTitleBB : sTitleText.node().getBBox();
 
     const font =
-      Math.max(parseInt(yTitleText.style("font-size")), parseInt(sTitleText.style("font-size")))
-      * this.width / Math.max(yTitleBB.width, sTitleBB.width);
+      Math.max(parseInt(cTitleText.style("font-size")), parseInt(sTitleText.style("font-size")))
+      * this.width / Math.max(cTitleBB.width, sTitleBB.width);
 
-    if (Math.max(yTitleBB.width, sTitleBB.width) > this.width) {
-      yTitleText.style("font-size", font + "px");
+    if (Math.max(cTitleBB.width, sTitleBB.width) > this.width) {
+      cTitleText.style("font-size", font + "px");
       sTitleText.style("font-size", font + "px");
     } else {
       // Else - reset the font size to default so it won't get stuck
-      yTitleText.style("font-size", null);
+      cTitleText.style("font-size", null);
       sTitleText.style("font-size", null);
     }
   },
@@ -640,14 +684,14 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
       _mouseover(d, i) {
         if (_this.model.time.dragging) return;
 
-        _this.model.entities.highlightEntity(d);
+        _this.model.marker.highlightMarker(d);
 
         _this.hovered = d;
         //put the exact value in the size title
         _this.updateTitleNumbers();
         _this.fitSizeOfTitles();
 
-        if (_this.model.entities.isSelected(d)) { // if selected, not show hover tooltip
+        if (_this.model.marker.isSelected(d)) { // if selected, not show hover tooltip
           _this._setTooltip();
         } else {
           //position tooltip
@@ -660,10 +704,10 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
         _this.hovered = null;
         _this.updateTitleNumbers();
         _this.fitSizeOfTitles();
-        _this.model.entities.clearHighlighted();
+        _this.model.marker.clearHighlighted();
       },
       _click(d, i) {
-        _this.model.entities.selectEntity(d);
+        _this.model.marker.selectMarker(d);
       }
     };
 
@@ -674,8 +718,8 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
     const _this = this;
 
     let mobile; // if is mobile device and only one bubble is selected, update the ytitle for the bubble
-    if (_this.isMobile && _this.model.entities.select && _this.model.entities.select.length === 1) {
-      mobile = _this.model.entities.select[0];
+    if (_this.isMobile && _this.model.marker.select && _this.model.marker.select.length === 1) {
+      mobile = _this.model.marker.select[0];
     }
 
     if (_this.hovered || mobile) {
@@ -687,7 +731,7 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
       if (unitC === "unit/" + _this.model.marker.color.which) unitC = "";
 
       const valueC = _this.values.color[_this._getKey(hovered)];
-      _this.yTitleEl.select("text")
+      _this.cTitleEl.select("text")
         .text(this.strings.title.C + ": " +
           (valueC || valueC === 0 ? formatterC(valueC) + " " + unitC : _this.translator("hints/nodata")));
 
@@ -703,15 +747,15 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
           .text(this.strings.title.S + ": " + formatterS(valueS) + " " + unitS);
       }
 
-      this.yInfoEl.classed("vzb-hidden", true);
+      this.cInfoEl.classed("vzb-hidden", true);
       this.sInfoEl.classed("vzb-hidden", true);
     } else {
-      this.yTitleEl.select("text")
+      this.cTitleEl.select("text")
         .text(this.strings.title.C);
       this.sTitleEl.select("text")
         .text(this.strings.title.S);
 
-      this.yInfoEl.classed("vzb-hidden", false);
+      this.cInfoEl.classed("vzb-hidden", false);
       this.sInfoEl.classed("vzb-hidden", false);
     }
   },
@@ -784,22 +828,22 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
 
     const OPACITY_HIGHLT = 0.8;
     const OPACITY_HIGHLT_DIM = 0.3;
-    const OPACITY_SELECT = this.model.entities.opacityRegular;
-    const OPACITY_REGULAR = this.model.entities.opacityRegular;
-    const OPACITY_SELECT_DIM = this.model.entities.opacitySelectDim;
-    this.someHighlighted = (this.model.entities.highlight.length > 0);
-    this.someSelected = (this.model.entities.select.length > 0);
-    this.lands
+    const OPACITY_SELECT = this.model.marker.opacityRegular;
+    const OPACITY_REGULAR = this.model.marker.opacityRegular;
+    const OPACITY_SELECT_DIM = this.model.marker.opacitySelectDim;
+    this.someHighlighted = (this.model.marker.highlight.length > 0);
+    this.someSelected = (this.model.marker.select.length > 0);
+    this.mapLands
       .style("opacity", d => {
 
       if (_this.someHighlighted) {
       //highlight or non-highlight
-      if (_this.model.entities.isHighlighted(d)) return OPACITY_HIGHLT;
+      if (_this.model.marker.isHighlighted(d)) return OPACITY_HIGHLT;
     }
 
     if (_this.someSelected) {
       //selected or non-selected
-      return _this.model.entities.isSelected(d) ? OPACITY_SELECT : OPACITY_SELECT_DIM;
+      return _this.model.marker.isSelected(d) ? OPACITY_SELECT : OPACITY_SELECT_DIM;
     }
 
     if (_this.someHighlighted) return OPACITY_HIGHLT_DIM;
@@ -808,35 +852,61 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
   });
 
 
-    const someSelectedAndOpacityZero = _this.someSelected && _this.model.entities.opacitySelectDim < 0.01;
+    const someSelectedAndOpacityZero = _this.someSelected && _this.model.marker.opacitySelectDim < 0.01;
 
     // when pointer events need update...
     if (someSelectedAndOpacityZero != this.someSelectedAndOpacityZero_1) {
-      this.lands.style("pointer-events", d => (!someSelectedAndOpacityZero || _this.model.entities.isSelected(d)) ?
+      this.mapLands.style("pointer-events", d => (!someSelectedAndOpacityZero || _this.model.marker.isSelected(d)) ?
         "visible" : "none");
     }
 
-    this.someSelectedAndOpacityZero_1 = _this.someSelected && _this.model.entities.opacitySelectDim < 0.01;
+    this.someSelectedAndOpacityZero_1 = _this.someSelected && _this.model.marker.opacitySelectDim < 0.01;
   },
 
   preload() {
     const _this = this;
-    const shape_path = globals.ext_resources.shapePath ? globals.ext_resources.shapePath :
-      globals.ext_resources.host + globals.ext_resources.preloadPath + "municipalities.json";
+    const shape_path = this.model.ui.map.topology.path
+      || globals.ext_resources.host + globals.ext_resources.preloadPath + "world-50m.json";
 
+    const projection = "geo" + utils.capitalize(this.model.ui.map.projection);
+
+    this.zeroProjection = d3[projection]();
+    this.zeroProjection
+      .scale(1)
+      .translate([0, 0]);
+
+    this.projection = d3[projection]();
+    this.projection
+      .scale(1)
+      .translate([0, 0]);
+
+    this.mapPath = d3.geoPath()
+      .projection(this.projection);
+
+    this.model.ui.map.scale = 1;
+    return this._loadShapes(shape_path).then(
+        shapes => {
+        _this.shapes = shapes;
+        _this.geometries = _this.shapes.objects[_this.model.ui.map.topology.objects.boundaries].geometries;
+        _this.mapFeature = topojson.feature(_this.shapes, _this.shapes.objects[_this.model.ui.map.topology.objects.geo]);
+        _this.mapBounds = _this.mapPath.bounds(_this.mapFeature);
+        _this.boundaries = topojson.mesh(_this.shapes, _this.shapes.objects[_this.model.ui.map.topology.objects.boundaries], (a, b) => a !== b);
+        _this.borderArcs = _this.cartogram.meshArcs(_this.shapes, _this.shapes.objects[_this.model.ui.map.topology.objects.boundaries], (a, b) => {
+          a.properties[_this.model.ui.map.topology.geoIdProperty] && 
+          a.properties[_this.model.ui.map.topology.geoIdProperty] !== b.properties[_this.model.ui.map.topology.geoIdProperty]
+        });
+      }
+    );
+  },
+  
+  _loadShapes(shape_path) {
     return new Promise((resolve, reject) => {
-        d3.json(shape_path, (error, json) => {
+      d3.json(shape_path, (error, json) => {
         if (error) return console.warn("Failed loading json " + shape_path + ". " + error);
-    _this.world = json;
-    _this.geometries = json.objects.topo.geometries;
-    _this.id_lookup = json.objects.id_lookup;
-    resolve();
-  });
-  });
-
+        resolve(json);
+      });
+    });
   }
-
-
 });
 
 

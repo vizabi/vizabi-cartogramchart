@@ -91,7 +91,10 @@ d3.cartogram = function() {
       // project the arcs into screen space
       var tf = transformer(topology.transform), x, y, len1, i1, out1, len2=topology.arcs.length, i2=0,
         projectedArcs = new Array(len2);
-      var projectedArcsDefer = new Promise();
+      let projectedArcsDeferResolver;
+      var projectedArcsDefer = new Promise((resolve, reject) => {
+        projectedArcsDeferResolver = resolve;
+      });
       var generateTopologySegment = function(segmentIndex, segmentLength) {
         return new Promise(function(resolve, reject) {
           i1 = 0;
@@ -107,7 +110,7 @@ d3.cartogram = function() {
       };
       var generateTopologyArcs = function(index, totalLength) {
         if (index >= totalLength) {
-          return projectedArcsDefer.resolve(projectedArcs);
+          return projectedArcsDeferResolver(projectedArcs);
         }
         x = 0;
         y = 0;
@@ -155,7 +158,7 @@ d3.cartogram = function() {
         var i = 0;
         var resizeSegments = function(index, iterations) {
           if (index >= iterations) {
-            return iterationsDefer.resolve();
+            return iterationsDeferResolver();
           }
           calculateObjectsMeta(objects, values, path).then(function(response) {
             var forceReductionFactor = 1 / (1 + response.sizeError);
@@ -220,8 +223,10 @@ d3.cartogram = function() {
             // break if we hit the target size error
           });
         };
-        var iterationsDefer = new Promise();
-
+        let iterationsDeferResolver;
+        const iterationsDefer = new Promise((resolve, reject) => {
+          iterationsDeferResolver = resolve;
+        });
         resizeSegments(0, iterations);
         iterationsDefer.then(function() {
           resolve({
