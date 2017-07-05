@@ -866,7 +866,7 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
   preload() {
     const _this = this;
     const shape_path = this.model.ui.map.topology.path 
-      || (this.model.data.preloadPath + "world-50m.json");    
+      || (this.model.data.assetsPath + "world-50m.json");    
 
     const projection = "geo" + utils.capitalize(this.model.ui.map.projection);
 
