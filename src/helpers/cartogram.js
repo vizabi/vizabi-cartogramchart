@@ -133,7 +133,7 @@ d3.cartogram = function() {
 
       projectedArcsDefer.then(function(projectedArcs) {
         // path with identity projection
-        var path = d3.geo.path()
+        var path = d3.geoPath()
           .projection(null);
         var objects = object(projectedArcs, { type: "GeometryCollection", geometries: geometries })
           .geometries.map(function(geom) {
@@ -258,7 +258,7 @@ d3.cartogram = function() {
   }
 
   var iterations = 8,
-    projection = d3.geo.albers(),
+    projection = d3.geoAlbers(),
     properties = function(id) {
       return {};
     },
@@ -267,7 +267,7 @@ d3.cartogram = function() {
     };
 
   // for convenience
-  carto.path = d3.geo.path()
+  carto.path = d3.geoPath()
     .projection(null);
 
   carto.iterations = function(i) {
