@@ -40,7 +40,7 @@ const CartogramComponent = Vizabi.Component.extend("cartogram", {
       type: "entities"
     }, {
       name: "marker",
-      type: "model"
+      type: "marker"
     }, {
       name: "locale",
       type: "locale"
