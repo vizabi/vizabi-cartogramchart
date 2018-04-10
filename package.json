@@ -7,13 +7,11 @@
   },
   "devDependencies": {
     "cross-env": "^5.0.0",
+    "vizabi": "latest",
     "vizabi-tool-bundler": "github:vizabi/vizabi-tool-bundler"
   },
   "name": "vizabi-cartogram",
   "version": "2.0.0",
-  "dependencies": {
-    "vizabi": "^0.23.0-28"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vizabi/vizabi-cartogram.git"
